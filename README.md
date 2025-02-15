@@ -5,8 +5,13 @@
 # 开发者
 会有一些小bug，请保持耐心，我仍在学习
 
+# 更新日志
+1.修复了新对话按钮的bug；
+2.支持多轮对话了现在；
+
 
 ![微信图片_20250215093550](https://github.com/user-attachments/assets/5331f95a-7503-495f-91d0-ff5d88161334)
+![微信截图_20250215104036](https://github.com/user-attachments/assets/61bad999-adf9-4f42-94c2-109215457363)
 
 
 
