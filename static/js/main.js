@@ -176,7 +176,7 @@ function setupEventListeners() {
             const charCounter = document.querySelector('.char-counter');
             if (charCounter) {
                 const length = event.target.value.length;
-                charCounter.textContent = `${length}/2000`;
+                charCounter.textContent = `${length}/8000`;
             }
         });
     }
@@ -232,15 +232,31 @@ async function handleUserMessage(message) {
     }
 
     try {
+        // 如果没有当前对话ID，创建新对话
+        if (!currentConversationId) {
+            const response = await fetch('/conversations', {
+                method: 'GET'
+            });
+            if (!response.ok) throw new Error('Failed to create conversation');
+            const conversations = await response.json();
+            if (conversations && conversations.length > 0) {
+                // 使用最新的对话
+                currentConversationId = conversations[0].id;
+            } else {
+                // 如果没有对话，创建新对话
+                const newConv = await createNewConversation();
+                currentConversationId = newConv.id;
+            }
+        }
+
         ChatState.isStreaming = true;
         elements.sendButton.disabled = true;
-        elements.messageInput.value = '';
         
-        // 添加用户消息
+        // 显示用户消息
         appendMessage(message, 'user');
         ChatState.history.push({ content: message, role: 'user' });
         
-        // 添加AI消息的占位
+        // 显示加载状态
         ChatState.addTypingIndicator();
         
         const response = await fetch('/ask', {
@@ -386,79 +402,161 @@ async function createNewConversation() {
         });
         
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error('Failed to create new conversation');
         }
         
-        const data = await response.json();
-        currentConversationId = data.conversation_id;
+        const newConversation = await response.json();
         
-        // 清空消息容器
+        // 清空当前对话内容
         elements.responseContainer.innerHTML = '';
+        elements.messageInput.value = '';
+        currentConversationId = newConversation.id;
         
-        // 更新会话列表
+        // 重新加载对话列表
         await loadConversations();
         
+        return newConversation;
+        
     } catch (error) {
-        showError('创建新会话失败: ' + error.message);
+        console.error('Error creating new conversation:', error);
+        showError('创建新对话失败');
     }
 }
 
 async function loadConversations() {
     try {
         const response = await fetch('/conversations');
-        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error('Failed to load conversations');
         }
         
         const conversations = await response.json();
         updateConversationsList(conversations);
         
     } catch (error) {
-        showError('加载会话列表失败: ' + error.message);
+        console.error('Error loading conversations:', error);
+        showError('加载对话列表失败');
     }
 }
 
 function updateConversationsList(conversations) {
-    if (!elements.conversationsList) return;
+    const list = document.querySelector('.conversations-list');
+    if (!list) return;
     
-    elements.conversationsList.innerHTML = '';
+    list.innerHTML = '';
+    
+    conversations.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     
     conversations.forEach(conv => {
         const item = document.createElement('div');
         item.className = `conversation-item ${conv.id === currentConversationId ? 'active' : ''}`;
+        
+        // 获取对话的第一条消息作为标题
+        const title = conv.messages[0]?.content || '新对话';
+        const truncatedTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
+        
         item.innerHTML = `
-            <i class="fas fa-comments"></i>
-            <span>${conv.title || '新会话'}</span>
+            <div class="conversation-title">${truncatedTitle}</div>
+            <div class="conversation-time">${formatTime(conv.updated_at)}</div>
+            <button class="delete-conversation" data-id="${conv.id}">
+                <i class="fas fa-trash"></i>
+            </button>
         `;
-        item.onclick = () => loadConversation(conv.id);
-        elements.conversationsList.appendChild(item);
+        
+        // 点击加载对话
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.delete-conversation')) {
+                loadConversation(conv.id);
+            }
+        });
+        
+        // 删除对话
+        const deleteBtn = item.querySelector('.delete-conversation');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (confirm('确定要删除这个对话吗？')) {
+                    await deleteConversation(conv.id);
+                }
+            });
+        }
+        
+        list.appendChild(item);
     });
 }
 
 async function loadConversation(conversationId) {
     try {
         const response = await fetch(`/conversations/${conversationId}`);
-        
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error('Failed to load conversation');
         }
         
-        const data = await response.json();
+        const conversation = await response.json();
         currentConversationId = conversationId;
         
-        // 清空并重新加载消息
+        // 清空当前对话内容
         elements.responseContainer.innerHTML = '';
-        data.messages.forEach(msg => {
+        
+        // 重新渲染所有消息
+        conversation.messages.forEach(msg => {
             appendMessage(msg.content, msg.role);
         });
         
         // 更新UI状态
-        updateConversationsList(await (await fetch('/conversations')).json());
+        document.querySelectorAll('.conversation-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.id === conversationId);
+        });
         
     } catch (error) {
-        showError('加载会话失败: ' + error.message);
+        console.error('Error loading conversation:', error);
+        showError('加载对话失败');
     }
+}
+
+async function deleteConversation(conversationId) {
+    try {
+        const response = await fetch(`/conversations/${conversationId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to delete conversation');
+        }
+        
+        // 如果删除的是当前对话，创建新对话
+        if (conversationId === currentConversationId) {
+            await createNewConversation();
+        }
+        
+        // 重新加载对话列表
+        await loadConversations();
+        
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+        showError('删除对话失败');
+    }
+}
+
+// 格式化时间
+function formatTime(isoString) {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diff = now - date;
+    
+    // 24小时内显示具体时间
+    if (diff < 24 * 60 * 60 * 1000) {
+        return date.toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+    
+    // 超过24小时显示日期
+    return date.toLocaleDateString('zh-CN', {
+        month: 'numeric',
+        day: 'numeric'
+    });
 }
 
 // 工具函数
