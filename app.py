@@ -24,9 +24,10 @@ load_dotenv()
 # 配置类
 class Config:
     UPLOAD_FOLDER = 'uploads'
+    CONVERSATIONS_FILE = 'conversations.json'  # 对话历史存储文件
     ARK_API_KEY = os.getenv("ARK_API_KEY")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
-    ENDPOINT_ID = "你的飞舟id"
+    ENDPOINT_ID = "飞舟id"
 
 # 初始化应用
 app = Flask(__name__)
@@ -89,7 +90,7 @@ def allowed_file(filename, file_type='code'):
 
 # 工具函数
 def create_chat_completion(messages: List[Dict[str, str]], stream: bool = False) -> Any:
-    """创建对话"""
+    """创建对话，支持多轮对话和推理内容"""
     client = openai.OpenAI(
         api_key=Config.ARK_API_KEY,
         base_url=Config.OPENAI_BASE_URL,
@@ -105,12 +106,37 @@ def create_chat_completion(messages: List[Dict[str, str]], stream: bool = False)
             messages=messages,
             stream=stream,
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=8000
         )
+        
+        if not stream and hasattr(response.choices[0].message, 'reasoning_content'):
+            # 如果存在推理内容，将其添加到响应中
+            return {
+                'content': response.choices[0].message.content,
+                'reasoning_content': response.choices[0].message.reasoning_content
+            }
         return response
     except Exception as e:
         logging.error(f"OpenAI API 调用失败: {str(e)}")
         raise
+
+def add_message(conversation_id: str, role: str, content: str, reasoning: str = None):
+    """添加消息到会话，支持推理内容"""
+    if conversation_id not in conversations:
+        return False
+    
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+    if reasoning:
+        message["reasoning_content"] = reasoning
+    
+    conversations[conversation_id]['messages'].append(message)
+    conversations[conversation_id]['updated_at'] = datetime.datetime.now().isoformat()
+    save_conversations_to_file()  # 保存到文件
+    return True
 
 def process_file_content(file_path: str) -> str:
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -127,8 +153,29 @@ def process_with_ai(prompt: str) -> str:
         logger.error(f"AI处理失败: {str(e)}")
         return f"处理失败: {str(e)}"
 
-# 存储对话历史的数据结构
+# 对话管理
 conversations = {}
+
+def load_conversations_from_file():
+    """从文件加载对话历史"""
+    try:
+        if os.path.exists(Config.CONVERSATIONS_FILE):
+            with open(Config.CONVERSATIONS_FILE, 'r', encoding='utf-8') as f:
+                loaded_conversations = json.load(f)
+                conversations.clear()
+                conversations.update(loaded_conversations)
+                logger.info(f"已加载 {len(conversations)} 个对话历史")
+    except Exception as e:
+        logger.error(f"加载对话历史失败: {str(e)}")
+
+def save_conversations_to_file():
+    """保存对话历史到文件"""
+    try:
+        with open(Config.CONVERSATIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(conversations, f, ensure_ascii=False, indent=2)
+        logger.info(f"已保存 {len(conversations)} 个对话历史")
+    except Exception as e:
+        logger.error(f"保存对话历史失败: {str(e)}")
 
 def get_conversations():
     """获取所有会话"""
@@ -143,34 +190,37 @@ def create_conversation():
         'created_at': datetime.datetime.now().isoformat(),
         'updated_at': datetime.datetime.now().isoformat()
     }
+    save_conversations_to_file()  # 保存到文件
     return conversations[conversation_id]
 
 def get_conversation(conversation_id):
     """获取指定会话"""
     return conversations.get(conversation_id)
 
-def add_message(conversation_id: str, role: str, content: str, reasoning: str = None):
-    """添加消息到会话"""
-    if conversation_id not in conversations:
-        return False
-    
-    message = {
-        "role": role,
-        "content": content
-    }
-    if reasoning:
-        message["reasoning_content"] = reasoning
-    
-    conversations[conversation_id]['messages'].append(message)
-    conversations[conversation_id]['updated_at'] = datetime.datetime.now().isoformat()
-    return True
-
 def delete_conversation(conversation_id):
     """删除会话"""
     if conversation_id in conversations:
         del conversations[conversation_id]
+        save_conversations_to_file()  # 保存到文件
         return True
     return False
+
+def prepare_chat_history(messages: List[Dict]) -> List[Dict]:
+    """准备对话历史，确保符合API要求"""
+    cleaned_messages = []
+    for msg in messages:
+        # 深拷贝消息并移除推理内容（API限制）
+        cleaned_msg = {
+            "role": msg["role"],
+            "content": msg["content"]
+        }
+        # 特殊处理系统消息
+        if msg["role"] == "system":
+            if len(cleaned_messages) == 0 or cleaned_messages[0]["role"] != "system":
+                cleaned_messages.insert(0, cleaned_msg)
+            continue
+        cleaned_messages.append(cleaned_msg)
+    return cleaned_messages
 
 @app.route('/')
 def index():
@@ -179,35 +229,58 @@ def index():
 @app.route('/ask', methods=['POST'])
 @handle_errors
 def ask():
-    """处理用户问题"""
+    """处理用户问题，支持多轮对话"""
     data = request.json
     conversation_id = data.get('conversation_id')
     message = data.get('message', '').strip()
-    search_enabled = data.get('search_enabled', False)
 
     if not message:
         return jsonify({'error': '消息不能为空'}), 400
 
-    # 获取或创建会话
+    # 获取或创建对话
     conversation = get_conversation(conversation_id)
     if not conversation:
-        conversation = create_conversation()
-        conversation_id = conversation['id']
+        # 如果没有指定对话ID或对话不存在，获取最新的对话
+        conversations_list = get_conversations()
+        if conversations_list:
+            conversation = conversations_list[0]
+        else:
+            # 如果没有任何对话，创建新对话
+            conversation = create_conversation()
+    
+    conversation_id = conversation['id']
 
-    # 添加用户消息到会话历史
+    # 添加用户消息
     add_message(conversation_id, "user", message)
+    
+    # 准备符合API要求的消息列表
+    system_prompt = {
+        "role": "system",
+        "content": """你是一个专业助手，请遵循以下原则：
+1. 保持回答的准确性和专业性
+2. 使用清晰的结构展示内容
+3. 适时展示思维推理过程
+4. 保持友好和耐心
+5. 记住上下文，保持对话连贯性"""
+    }
+    
+    # 使用所有历史消息，但限制token数量
+    messages = [msg for msg in conversation['messages'] if msg['role'] != 'system']
+    total_tokens = sum(len(msg['content']) for msg in messages)
+    
+    # 如果总token数超过限制，移除最旧的消息直到满足限制
+    max_tokens = 4000  # 根据实际情况调整
+    while total_tokens > max_tokens and len(messages) > 2:
+        removed_msg = messages.pop(0)
+        total_tokens -= len(removed_msg['content'])
+    
+    # 添加系统提示和清理后的消息
+    messages = [system_prompt] + messages
 
-    # 准备消息列表
-    messages = [
-        {"role": "system", "content": "你是一个多功能助手，可以回答问题，解释概念，提供建议，翻译文本等。"},
-    ]
-    messages.extend(conversation['messages'])
-
-    # 生成响应
     def generate():
         content_buffer = ""
-        current_sentence = ""
         reasoning_buffer = ""
+        current_sentence = ""
         
         try:
             response = create_chat_completion(messages, stream=True)
@@ -216,10 +289,9 @@ def ask():
                 if chunk.choices and chunk.choices[0].delta:
                     delta = chunk.choices[0].delta
                     
-                    # 检查是否有思维链内容
+                    # 处理推理内容
                     if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                         reasoning_buffer += delta.reasoning_content
-                        # 直接发送当前完整的思维链内容
                         yield f'data: {{"type": "reasoning", "content": {json.dumps(reasoning_buffer)}}}\n\n'
                     
                     # 处理主要内容
@@ -237,23 +309,31 @@ def ask():
             if current_sentence:
                 yield f'data: {{"type": "content", "content": {json.dumps(content_buffer)}}}\n\n'
 
-            # 添加助手回复到会话历史
-            add_message(conversation_id, "assistant", content_buffer, reasoning_buffer)
+            # 添加助手回复到对话历史并保存
+            add_message(
+                conversation_id, 
+                "assistant", 
+                content_buffer,
+                reasoning=reasoning_buffer
+            )
             
-            # 发送结束信号
-            yield 'data: {"type": "done"}\n\n'
+            yield f'data: {{"type": "done", "conversation_id": "{conversation_id}"}}\n\n'
             
         except Exception as e:
-            logging.error(f"处理消息时出错: {str(e)}")
-            logging.error(traceback.format_exc())
-            error_message = {"type": "error", "content": str(e)}
-            yield f'data: {json.dumps(error_message)}\n\n'
+            logger.error(f"流式请求失败: {str(e)}")
+            yield f'data: {{"type": "error", "content": "{str(e)}"}}\n\n'
 
     return Response(generate(), mimetype='text/event-stream')
 
-@app.route('/conversations', methods=['GET'])
+@app.route('/conversations', methods=['GET', 'POST'])
 def list_conversations():
-    """获取所有会话列表"""
+    """获取所有会话列表或创建新会话"""
+    if request.method == 'POST':
+        # 创建新对话
+        conversation = create_conversation()
+        return jsonify(conversation)
+    
+    # GET 请求返回所有对话
     return jsonify(get_conversations())
 
 @app.route('/conversations/<conversation_id>', methods=['GET'])
@@ -270,6 +350,32 @@ def delete_conversation_route(conversation_id):
     if delete_conversation(conversation_id):
         return '', 204
     return jsonify({"error": "会话不存在"}), 404
+
+def cleanup_conversations():
+    """自动清理旧对话，保持内存效率"""
+    max_conversations = 100  # 最大保留对话数
+    max_age = datetime.timedelta(days=7)  # 最长保留时间
+    
+    now = datetime.datetime.now()
+    to_delete = []
+    
+    for conv_id, conv in conversations.items():
+        # 按时间清理
+        create_time = datetime.datetime.fromisoformat(conv['created_at'])
+        if (now - create_time) > max_age:
+            to_delete.append(conv_id)
+            continue
+        
+        # 按数量清理
+        if len(conversations) > max_conversations:
+            oldest = min(conversations.values(), key=lambda x: x['created_at'])
+            to_delete.append(oldest['id'])
+    
+    for conv_id in to_delete:
+        delete_conversation(conv_id)
+    
+    # 保存更改到文件
+    save_conversations_to_file()
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -366,6 +472,9 @@ def serve_image(filename):
         return f'Error loading image: {str(e)}', 500
 
 if __name__ == '__main__':
+    # 启动时加载对话历史
+    load_conversations_from_file()
+    
     import atexit
     import signal
     import sys
@@ -407,4 +516,9 @@ if __name__ == '__main__':
         kill_process_on_port(5000)
         time.sleep(1)  # 等待端口完全释放
 
+    from apscheduler.schedulers.background import BackgroundScheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(cleanup_conversations, 'interval', hours=12)  # 每12小时清理一次
+    scheduler.start()
+    
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
