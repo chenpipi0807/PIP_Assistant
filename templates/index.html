@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>陈平安的小老D（R1满血极速版）</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/line-numbers/prism-line-numbers.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 左侧边栏 -->
+        <aside class="sidebar">
+            <button id="newChat" class="new-chat-btn">
+                <i class="fas fa-plus"></i> 新对话
+            </button>
+            <div class="conversations-list">
+                <!-- 对话历史将通过JavaScript动态添加 -->
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <div class="container">
+            <div class="header">
+                <h1>陈平安的小老D（R1满血极速版）</h1>
+                <div class="toolbar">
+                    <div class="file-upload-group">
+                        <form id="uploadForm" class="upload-form">
+                            <input type="file" id="fileInput" style="display: none;">
+                            <select id="fileType" style="display: none;">
+                                <option value="code">代码文件</option>
+                                <option value="document">文档</option>
+                                <option value="image">图片</option>
+                            </select>
+                            <div class="upload-buttons">
+                                <button type="button" class="toolbar-button" data-type="code">
+                                    <i class="fas fa-code"></i> 上传代码
+                                </button>
+                                <button type="button" class="toolbar-button" data-type="document">
+                                    <i class="fas fa-file-alt"></i> 上传文档
+                                </button>
+                                <button type="button" class="toolbar-button" data-type="image">
+                                    <i class="fas fa-image"></i> 上传图片
+                                </button>
+                            </div>
+                            <div class="file-info" style="display: none;">
+                                <span class="file-name">未选择文件</span>
+                                <span class="file-hint"></span>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="search-toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="searchToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="searchStatus">联网搜索：已关闭</span>
+                    </div>
+                </div>
+            </div>
+            <div class="chat-container">
+                <div class="chat-content">
+                    <div class="response-container" id="assistantResponse">
+                        <div id="reasoning-content" class="reasoning-content"></div>
+                    </div>
+                </div>
+                <div class="input-area">
+                    <div class="input-wrapper">
+                        <textarea id="userInput" placeholder="请输入您的问题...按 Enter 发送，Shift+Enter 换行" maxlength="2000"></textarea>
+                        <div class="char-counter">0/2000</div>
+                    </div>
+                    <button id="askAssistant">提问</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧边栏占位 -->
+        <div class="right-sidebar-space"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/copy-to-clipboard/prism-copy-to-clipboard.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/line-numbers/prism-line-numbers.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/show-language/prism-show-language.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/toolbar/prism-toolbar.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
